@@ -5,8 +5,6 @@
 #include "logleveldialog.h"
 #include "devinfodialog.h"
 #include "helpdialog.h"
-#include "aboutdialog.h"
-
 #include <QMenuBar>
 #include <QStatusBar>
 #include <QProgressBar>
