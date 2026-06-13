@@ -1,0 +1,104 @@
+name: Windows Build & Package
+
+on:
+  push:
+    branches: [main, master]
+    tags:     ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  QT_VERSION:  '6.7.3'
+  BUILD_TYPE:  Release
+
+jobs:
+  build-windows:
+    name: Build (MSVC x64) + Inno Setup
+    runs-on: windows-latest
+
+    steps:
+    # ── 1. Checkout ───────────────────────────────────────────────────────────
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # ── 2. Install Qt6 ────────────────────────────────────────────────────────
+    - name: Install Qt ${{ env.QT_VERSION }}
+      uses: jurplel/install-qt-action@v4
+      with:
+        version:   ${{ env.QT_VERSION }}
+        host:      windows
+        target:    desktop
+        arch:      win64_msvc2022_64
+        modules:   ''         # add e.g. 'qtserialport' if needed
+        cache:     true
+
+    # ── 3. Install Inno Setup ────────────────────────────────────────────────
+    - name: Install Inno Setup 6
+      run: |
+        choco install innosetup --no-progress -y
+      shell: pwsh
+
+    # ── 4. Configure with MSVC (x64 Developer Command Prompt) ────────────────
+    - name: Configure CMake
+      run: |
+        cmake -B build `
+              -G "Visual Studio 17 2022" -A x64 `
+              -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+              -DQt6_DIR="${{ env.Qt6_DIR }}"
+      shell: pwsh
+
+    # ── 5. Build ─────────────────────────────────────────────────────────────
+    - name: Build
+      run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+      shell: pwsh
+
+    # ── 6. Stage with windeployqt ─────────────────────────────────────────────
+    - name: Stage deployment directory
+      run: |
+        $deployDir = "build\deploy"
+        New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
+
+        # Copy exe (CMake may place it in build\Release\ or build\)
+        $exeSrc = Get-ChildItem -Recurse build -Filter adgui.exe |
+                  Where-Object { $_.FullName -notlike '*CMakeFiles*' } |
+                  Select-Object -First 1
+        Copy-Item $exeSrc.FullName $deployDir
+
+        # Run windeployqt6
+        $wdq = Join-Path $env:Qt6_DIR "..\..\..\bin\windeployqt6.exe" | Resolve-Path
+        & $wdq `
+            --dir $deployDir `
+            --no-system-d3d-compiler `
+            --no-opengl-sw `
+            --no-virtualkeyboard `
+            --no-quick-import `
+            --translations en `
+            "$deployDir\adgui.exe"
+      shell: pwsh
+
+    # ── 7. Compile Inno Setup installer ──────────────────────────────────────
+    - name: Build installer
+      run: |
+        New-Item -ItemType Directory -Force -Path dist | Out-Null
+        & "C:\Program Files (x86)\Inno Setup 6\iscc.exe" `
+            /O"dist" `
+            "package\windows.iss"
+      shell: pwsh
+
+    # ── 8. Upload installer artifact ─────────────────────────────────────────
+    - name: Upload installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: AVRDUDE-GUI-win64-installer
+        path: dist\*.exe
+        retention-days: 30
+
+    # ── 9. Attach to GitHub Release (only on version tags) ───────────────────
+    - name: Upload to GitHub Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist\*.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
