@@ -1,5 +1,7 @@
 #include "programmerdialog.h"
+#include "avrdude_backend.h"
 
+#include <utility>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -10,27 +12,8 @@
 #include <QLabel>
 #include <QGroupBox>
 
-// Representative programmer table  { id, description, protocol }
-struct ProgEntry { const char *id; const char *desc; const char *proto; };
-static const ProgEntry kProgrammers[] = {
-    {"arduino",        "Arduino",                           "ISP"},
-    {"avrispmkII",     "Atmel AVR ISP mkII",                "ISP"},
-    {"usbasp",         "USBasp (www.fischl.de)",            "ISP"},
-    {"usbtiny",        "USBtiny simple USB programmer",     "ISP"},
-    {"stk500",         "Atmel STK500",                      "ISP"},
-    {"stk500v2",       "Atmel STK500 V2",                   "ISP"},
-    {"dragon_isp",     "Atmel AVR Dragon in ISP mode",      "ISP"},
-    {"avrisp2",        "Atmel AVR ISP 2",                   "ISP"},
-    {"snap_isp",       "Microchip SNAP (ISP mode)",         "ISP"},
-    {"jtag2updi",      "JTAGv2 to UPDI bridge",             "UPDI"},
-    {"serialupdi",     "Serial UPDI single-wire",           "UPDI"},
-    {"pymcuprog",      "Microchip pymcuprog UPDI",          "UPDI"},
-    {"atmelice_updi",  "Atmel-ICE (UPDI mode)",             "UPDI"},
-    {"snap_updi",      "Microchip SNAP (UPDI mode)",        "UPDI"},
-    {"avr910",         "Atmel Low Cost Serial Programmer",  "TPI"},
-    {"avrdoper",       "AVR-Doper (HID version)",           "HV"},
-    {nullptr, nullptr, nullptr}
-};
+// Programmer list is loaded from libavrdude at construction time and stored
+// in m_allProgrammers (see header).
 
 ProgrammerDialog::ProgrammerDialog(QWidget *parent) : QDialog(parent)
 {
@@ -79,6 +62,16 @@ ProgrammerDialog::ProgrammerDialog(QWidget *parent) : QDialog(parent)
     connect(m_filterEdit, &QLineEdit::textChanged,
             this, &ProgrammerDialog::onFilterChanged);
 
+    m_allProgrammers = AvrdudeBackend::instance().availableProgrammers();
+    if (m_allProgrammers.isEmpty()) {
+        // Fallback list for UI testing without HAVE_LIBAVRDUDE
+        m_allProgrammers = {
+            {"arduino", "Arduino", "ISP"},
+            {"usbasp",  "USBasp (www.fischl.de)", "ISP"},
+            {"avrispmkII", "Atmel AVR ISP mkII", "ISP"},
+        };
+    }
+
     applyFilter("All", {});
 }
 
@@ -102,17 +95,18 @@ void ProgrammerDialog::onFilterChanged(const QString &t) {
 void ProgrammerDialog::applyFilter(const QString &proto, const QString &text)
 {
     m_progList->clear();
-    for (int i = 0; kProgrammers[i].id; ++i) {
-        const auto &e = kProgrammers[i];
+    for (const ProgrammerInfo &e : std::as_const(m_allProgrammers)) {
         bool protoOk = (proto == "All") ||
-                       QString(e.proto).contains(proto, Qt::CaseInsensitive);
+                       e.type.contains(proto, Qt::CaseInsensitive) ||
+                       e.id.contains(proto, Qt::CaseInsensitive) ||
+                       e.desc.contains(proto, Qt::CaseInsensitive);
         bool textOk  = text.isEmpty() ||
-                       QString(e.id).contains(text, Qt::CaseInsensitive) ||
-                       QString(e.desc).contains(text, Qt::CaseInsensitive);
+                       e.id.contains(text, Qt::CaseInsensitive) ||
+                       e.desc.contains(text, Qt::CaseInsensitive);
         if (protoOk && textOk) {
             auto *item = new QListWidgetItem(
                 QString("%1  —  %2").arg(e.id, e.desc));
-            item->setData(Qt::UserRole, QString(e.id));
+            item->setData(Qt::UserRole, e.id);
             m_progList->addItem(item);
         }
     }

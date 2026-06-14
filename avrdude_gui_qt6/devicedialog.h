@@ -1,8 +1,10 @@
 #pragma once
 // devicedialog.h – mirrors adgui.py device-selection dialog (device.ui)
 
+#include "avrdude_backend.h"
+
 #include <QDialog>
-#include <QStringList>
+#include <QVector>
 
 namespace Ui { class DeviceDialog; }
 class QListWidget;
@@ -16,7 +18,11 @@ public:
     explicit DeviceDialog(QWidget *parent = nullptr);
     ~DeviceDialog() override;
 
-    QString selectedPart() const;
+    // Returns the short libavrdude id (e.g. "m328p"), suitable for
+    // AvrdudeBackend::connectDevice() / partDetails().
+    QString selectedPartId() const;
+    // Returns the human-readable description (e.g. "ATmega328P").
+    QString selectedPartDesc() const;
 
 private slots:
     void onFamilyChanged(int index);
@@ -30,7 +36,6 @@ private:
     QLineEdit    *m_filterEdit{nullptr};
     QListWidget  *m_deviceList{nullptr};
 
-    // Full device list sourced from libavrdude's avr_find_parts() at runtime.
-    // For now populated with representative entries.
-    QStringList m_allParts;
+    // Sourced from AvrdudeBackend::instance().availableParts()
+    QVector<PartInfo> m_allParts;
 };

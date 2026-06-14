@@ -204,5 +204,6 @@ void MemoriesDialog::onReadFuses() {
     emit operationRequested(AvrdudeWorker::Operation::ReadFuses, {});
 }
 void MemoriesDialog::onWriteFuses() {
-    emit operationRequested(AvrdudeWorker::Operation::WriteFuses, {});
+    QString packed = QString("%1,%2,%3").arg(m_lfuse->text(), m_hfuse->text(), m_efuse->text());
+    emit operationRequested(AvrdudeWorker::Operation::WriteFuses, packed);
 }

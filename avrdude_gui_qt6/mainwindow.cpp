@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "avrdude_backend.h"
 #include "devicedialog.h"
 #include "programmerdialog.h"
 #include "memoriesdialog.h"
@@ -26,79 +27,77 @@ AvrdudeWorker::AvrdudeWorker(QObject *parent) : QThread(parent) {}
 
 void AvrdudeWorker::run()
 {
-    // All real libavrdude calls happen here so the GUI thread is never blocked.
-    // The pattern mirrors adgui.py's use of threads for every avrdude operation.
-    //
-    // Replace each stub below with the actual libavrdude C API calls:
-    //   avrdude_initconfig / avrdude_run / avr_read / avr_write / …
-    //
-    emit logMessage(5, QString("[worker] operation %1 started")
-                           .arg(static_cast<int>(m_op)));
-
+    auto &backend = AvrdudeBackend::instance();
     bool ok = false;
+
     switch (m_op) {
     case Operation::Connect:
-        // avrdude_open(m_programmer, m_part, m_port, …)
-        emit logMessage(5, "Connecting to " + m_part + " via " + m_programmer
-                               + " on " + m_port);
-        ok = true;
+        ok = backend.connectDevice(m_programmer, m_partId, m_port);
         break;
+
     case Operation::Disconnect:
-        // avrdude_close(…)
+        backend.disconnectDevice();
         ok = true;
         break;
-    case Operation::ReadSignature:
-        emit progress("Reading signature", 0);
-        // avr_signature(…)
-        emit progress("Reading signature", 100);
-        ok = true;
-        break;
-    case Operation::ReadFlash:
-        emit progress("Reading flash", 0);
-        // avr_read(…, "flash", …)
-        emit progress("Reading flash", 100);
-        ok = true;
-        break;
-    case Operation::WriteFlash:
-        emit progress("Writing flash", 0);
-        // avr_write(…, "flash", …)
-        emit progress("Writing flash", 100);
-        ok = true;
-        break;
-    case Operation::VerifyFlash:
-        emit progress("Verifying flash", 0);
-        // avr_verify(…)
-        emit progress("Verifying flash", 100);
-        ok = true;
-        break;
-    case Operation::ReadEeprom:
-        emit progress("Reading EEPROM", 0);
-        emit progress("Reading EEPROM", 100);
-        ok = true;
-        break;
-    case Operation::WriteEeprom:
-        emit progress("Writing EEPROM", 0);
-        emit progress("Writing EEPROM", 100);
-        ok = true;
-        break;
-    case Operation::VerifyEeprom:
-        emit progress("Verifying EEPROM", 0);
-        emit progress("Verifying EEPROM", 100);
-        ok = true;
-        break;
-    case Operation::ReadFuses:
-        emit progress("Reading fuses", 0);
-        emit progress("Reading fuses", 100);
-        ok = true;
-        break;
-    case Operation::WriteFuses:
-        emit progress("Writing fuses", 0);
-        emit progress("Writing fuses", 100);
-        ok = true;
+
+    case Operation::ReadSignature: {
+        QString sig;
+        ok = backend.readSignature(sig);
+        if (ok) emit logMessage(2, "Signature: " + sig);
         break;
     }
 
-    emit logMessage(5, QString("[worker] operation finished (success=%1)").arg(ok));
+    case Operation::ReadFlash:
+        ok = backend.readMemory("flash", m_flashFile);
+        break;
+    case Operation::WriteFlash:
+        ok = backend.writeMemory("flash", m_flashFile);
+        break;
+    case Operation::VerifyFlash:
+        ok = backend.verifyMemory("flash", m_flashFile);
+        break;
+
+    case Operation::ReadEeprom:
+        ok = backend.readMemory("eeprom", m_eepromFile);
+        break;
+    case Operation::WriteEeprom:
+        ok = backend.writeMemory("eeprom", m_eepromFile);
+        break;
+    case Operation::VerifyEeprom:
+        ok = backend.verifyMemory("eeprom", m_eepromFile);
+        break;
+
+    case Operation::ReadFuses: {
+        uint8_t lo = 0, hi = 0, ext = 0;
+        bool okLo  = backend.readFuse("lfuse", lo);
+        bool okHi  = backend.readFuse("hfuse", hi);
+        bool okExt = backend.readFuse("efuse", ext);
+        ok = okLo || okHi || okExt;  // not all parts have all three
+        if (okLo)  emit logMessage(2, QString("LFUSE = 0x%1").arg(lo,  2, 16, QChar('0')));
+        if (okHi)  emit logMessage(2, QString("HFUSE = 0x%1").arg(hi,  2, 16, QChar('0')));
+        if (okExt) emit logMessage(2, QString("EFUSE = 0x%1").arg(ext, 2, 16, QChar('0')));
+        break;
+    }
+
+    case Operation::WriteFuses: {
+        // m_flashFile is repurposed here as "lfuse,hfuse,efuse" hex triplet,
+        // set by MemoriesDialog before emitting operationRequested.
+        const QStringList parts = m_flashFile.split(',');
+        bool any = false;
+        if (parts.size() >= 1 && !parts[0].isEmpty())
+            any |= backend.writeFuse("lfuse", static_cast<uint8_t>(parts[0].toUInt(nullptr, 16)));
+        if (parts.size() >= 2 && !parts[1].isEmpty())
+            any |= backend.writeFuse("hfuse", static_cast<uint8_t>(parts[1].toUInt(nullptr, 16)));
+        if (parts.size() >= 3 && !parts[2].isEmpty())
+            any |= backend.writeFuse("efuse", static_cast<uint8_t>(parts[2].toUInt(nullptr, 16)));
+        ok = any;
+        break;
+    }
+    }
+
+    if (!ok && !backend.lastError().isEmpty())
+        emit logMessage(0, backend.lastError());
+
     emit finished(ok);
 }
 
@@ -121,7 +120,28 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_worker, &AvrdudeWorker::finished,   this, &MainWindow::onWorkerFinished);
 
     setConnected(false);
-    onLogMessage(5, "AVRDUDE GUI started.");
+    onLogMessage(2, "AVRDUDE GUI started.");
+
+    // ---- libavrdude backend setup ----
+    auto &backend = AvrdudeBackend::instance();
+
+    // Callbacks fire from the worker thread; route them to the GUI thread
+    // via Qt::QueuedConnection-equivalent using QMetaObject::invokeMethod.
+    backend.setLogCallback([this](LogLevel lvl, const QString &msg) {
+        QMetaObject::invokeMethod(this, [this, lvl, msg]() {
+            onLogMessage(static_cast<int>(lvl), msg);
+        }, Qt::QueuedConnection);
+    });
+    backend.setProgressCallback([this](const QString &task, int pct) {
+        QMetaObject::invokeMethod(this, [this, task, pct]() {
+            onProgress(task, pct);
+        }, Qt::QueuedConnection);
+    });
+
+    if (!backend.loadConfig()) {
+        onLogMessage(1, "avrdude.conf not loaded: " + backend.lastError());
+        onLogMessage(2, "Device/programmer lists will use built-in fallback entries.");
+    }
 }
 
 MainWindow::~MainWindow() = default;
@@ -189,8 +209,9 @@ void MainWindow::onSelectDevice()
 {
     DeviceDialog dlg(this);
     if (dlg.exec() == QDialog::Accepted) {
-        m_currentPart = dlg.selectedPart();
-        onLogMessage(5, "Device selected: " + m_currentPart);
+        m_currentPart   = dlg.selectedPartDesc();
+        m_currentPartId = dlg.selectedPartId();
+        onLogMessage(2, "Device selected: " + m_currentPart + " (" + m_currentPartId + ")");
     }
 }
 
@@ -215,9 +236,11 @@ void MainWindow::onConnect()
     if (m_worker->isRunning()) return;
 
     m_worker->setPart(m_currentPart);
+    m_worker->setPartId(m_currentPartId);
     m_worker->setProgrammer(m_currentProgrammer);
     m_worker->setPort(m_currentPort);
     m_worker->setOperation(AvrdudeWorker::Operation::Connect);
+    m_lastOp = AvrdudeWorker::Operation::Connect;
     m_worker->start();
 }
 
@@ -225,12 +248,13 @@ void MainWindow::onDisconnect()
 {
     if (m_worker->isRunning()) return;
     m_worker->setOperation(AvrdudeWorker::Operation::Disconnect);
+    m_lastOp = AvrdudeWorker::Operation::Disconnect;
     m_worker->start();
 }
 
 void MainWindow::onDeviceInfo()
 {
-    DevInfoDialog dlg(m_currentPart, this);
+    DevInfoDialog dlg(m_currentPart, m_currentPartId, this);
     dlg.exec();
 }
 
@@ -246,8 +270,10 @@ void MainWindow::onMemoryOps()
             this, [this](AvrdudeWorker::Operation op, const QString &file) {
         if (m_worker->isRunning()) return;
         m_worker->setOperation(op);
+        m_lastOp = op;
         if (op == AvrdudeWorker::Operation::WriteFlash ||
-            op == AvrdudeWorker::Operation::VerifyFlash)
+            op == AvrdudeWorker::Operation::VerifyFlash ||
+            op == AvrdudeWorker::Operation::WriteFuses)
             m_worker->setFlashFile(file);
         else if (op == AvrdudeWorker::Operation::WriteEeprom ||
                  op == AvrdudeWorker::Operation::VerifyEeprom)
@@ -295,13 +321,14 @@ void MainWindow::onProgress(const QString &task, int percent)
 
 void MainWindow::onWorkerFinished(bool success)
 {
-    if (m_worker->property("op").isValid()) {
-        // intentional: no-op here; specific ops update m_connected
-    }
-    // Detect connect/disconnect from last queued operation via a simple heuristic:
-    // If progress bar label contains "Connecting" or value is still 0 → connected.
-    setConnected(success && m_progressBar->value() == 0 ? m_connected : success);
+    if (m_lastOp == AvrdudeWorker::Operation::Connect)
+        setConnected(success);
+    else if (m_lastOp == AvrdudeWorker::Operation::Disconnect)
+        setConnected(false);
+
     m_progressBar->setValue(success ? 100 : 0);
+    onLogMessage(success ? 2 : 0,
+                  success ? "Operation completed." : "Operation failed.");
 }
 
 // ---------------------------------------------------------------------------

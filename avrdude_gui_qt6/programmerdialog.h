@@ -1,7 +1,10 @@
 #pragma once
 // programmerdialog.h – mirrors adgui.py programmer-selection dialog (programmer.ui)
 
+#include "avrdude_backend.h"
+
 #include <QDialog>
+#include <QVector>
 
 class QComboBox;
 class QLineEdit;
@@ -29,4 +32,6 @@ private:
     QListWidget *m_progList{nullptr};
     QComboBox   *m_portCombo{nullptr};
     QLineEdit   *m_portEdit{nullptr};
+
+    QVector<ProgrammerInfo> m_allProgrammers;
 };

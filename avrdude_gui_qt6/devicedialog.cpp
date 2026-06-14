@@ -1,5 +1,8 @@
 #include "devicedialog.h"
+#include "avrdude_backend.h"
 
+#include <algorithm>
+#include <utility>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QComboBox>
@@ -14,20 +17,21 @@ DeviceDialog::DeviceDialog(QWidget *parent) : QDialog(parent)
     setWindowTitle(tr("Select Device"));
     resize(360, 440);
 
-    // ---- Populate representative device list ----
-    // At runtime replace this with a call to avr_find_parts() via libavrdude
-    m_allParts = {
-        "ATmega328P", "ATmega328PB", "ATmega2560", "ATmega1280",
-        "ATmega168", "ATmega168P", "ATmega8", "ATmega16", "ATmega32",
-        "ATmega48", "ATmega88", "ATmega48P", "ATmega88P",
-        "ATmega1284P", "ATmega644P", "ATmega128",
-        "ATtiny13",  "ATtiny13A", "ATtiny25",  "ATtiny45",  "ATtiny85",
-        "ATtiny24",  "ATtiny44",  "ATtiny84",  "ATtiny2313", "ATtiny4313",
-        "ATtiny261", "ATtiny461", "ATtiny861",
-        "AT90S1200", "AT90S2313", "AT90S8515",
-        "ATxmega128A1", "ATxmega64A1",
-    };
-    m_allParts.sort(Qt::CaseInsensitive);
+    // ---- Populate device list from libavrdude ----
+    m_allParts = AvrdudeBackend::instance().availableParts();
+    if (m_allParts.isEmpty()) {
+        // Fallback so the dialog is still usable if config wasn't loaded
+        // (e.g. running without HAVE_LIBAVRDUDE for UI testing).
+        const QStringList fallback = {
+            "ATmega328P", "ATmega2560", "ATmega168", "ATtiny85", "ATtiny2313",
+        };
+        for (const auto &desc : fallback)
+            m_allParts.push_back(PartInfo{desc.toLower(), desc});
+    }
+    std::sort(m_allParts.begin(), m_allParts.end(),
+              [](const PartInfo &a, const PartInfo &b) {
+                  return a.desc.compare(b.desc, Qt::CaseInsensitive) < 0;
+              });
 
     // ---- Layout ----
     auto *vbox = new QVBoxLayout(this);
@@ -70,7 +74,13 @@ DeviceDialog::DeviceDialog(QWidget *parent) : QDialog(parent)
 
 DeviceDialog::~DeviceDialog() = default;
 
-QString DeviceDialog::selectedPart() const
+QString DeviceDialog::selectedPartId() const
+{
+    auto *item = m_deviceList->currentItem();
+    return item ? item->data(Qt::UserRole).toString() : QString{};
+}
+
+QString DeviceDialog::selectedPartDesc() const
 {
     auto *item = m_deviceList->currentItem();
     return item ? item->text() : QString{};
@@ -94,11 +104,16 @@ void DeviceDialog::populateDevices()
 void DeviceDialog::applyFilter(const QString &family, const QString &text)
 {
     m_deviceList->clear();
-    for (const QString &part : std::as_const(m_allParts)) {
-        bool familyOk = (family == "All") || part.startsWith(family, Qt::CaseInsensitive);
-        bool textOk   = text.isEmpty() || part.contains(text, Qt::CaseInsensitive);
-        if (familyOk && textOk)
-            m_deviceList->addItem(part);
+    for (const PartInfo &part : std::as_const(m_allParts)) {
+        bool familyOk = (family == "All") || part.desc.startsWith(family, Qt::CaseInsensitive);
+        bool textOk   = text.isEmpty()
+                        || part.desc.contains(text, Qt::CaseInsensitive)
+                        || part.id.contains(text, Qt::CaseInsensitive);
+        if (familyOk && textOk) {
+            auto *item = new QListWidgetItem(part.desc);
+            item->setData(Qt::UserRole, part.id);
+            m_deviceList->addItem(item);
+        }
     }
     if (m_deviceList->count() > 0)
         m_deviceList->setCurrentRow(0);

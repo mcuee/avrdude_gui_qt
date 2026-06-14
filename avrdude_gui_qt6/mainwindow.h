@@ -28,6 +28,7 @@ public:
     void setFlashFile(const QString &f)    { m_flashFile = f; }
     void setEepromFile(const QString &f)   { m_eepromFile = f; }
     void setPart(const QString &p)         { m_part = p; }
+    void setPartId(const QString &id)      { m_partId = id; }
     void setProgrammer(const QString &pg)  { m_programmer = pg; }
     void setPort(const QString &port)      { m_port = port; }
 
@@ -42,7 +43,7 @@ protected:
 private:
     Operation m_op{Operation::Connect};
     QString   m_flashFile, m_eepromFile;
-    QString   m_part, m_programmer, m_port;
+    QString   m_part, m_partId, m_programmer, m_port;
 };
 
 // ---------------------------------------------------------------------------
@@ -93,11 +94,13 @@ private:
     QLabel       *m_statusLabel{nullptr};
 
     // State
-    QString m_currentPart;
-    QString m_currentProgrammer;
+    QString m_currentPart;       // human-readable description (display)
+    QString m_currentPartId;     // libavrdude short id (for backend calls)
+    QString m_currentProgrammer; // libavrdude programmer id
     QString m_currentPort;
     int     m_logLevel{5};
     bool    m_connected{false};
 
     AvrdudeWorker *m_worker{nullptr};
+    AvrdudeWorker::Operation m_lastOp{AvrdudeWorker::Operation::Connect};
 };

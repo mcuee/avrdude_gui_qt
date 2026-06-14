@@ -83,6 +83,7 @@ endforeach()
 set(SOURCES
     main.cpp
     mainwindow.cpp
+    avrdude_backend.cpp
     devicedialog.cpp
     programmerdialog.cpp
     memoriesdialog.cpp
@@ -94,6 +95,7 @@ set(SOURCES
 
 set(HEADERS
     mainwindow.h
+    avrdude_backend.h
     devicedialog.h
     programmerdialog.h
     memoriesdialog.h

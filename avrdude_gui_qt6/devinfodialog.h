@@ -6,5 +6,5 @@ class DevInfoDialog : public QDialog
 {
     Q_OBJECT
 public:
-    explicit DevInfoDialog(const QString &part, QWidget *parent = nullptr);
+    explicit DevInfoDialog(const QString &partDesc, const QString &partId, QWidget *parent = nullptr);
 };
