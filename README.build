@@ -1,0 +1,12 @@
+1) Build libavrdude as a library. Clone avrdudes/avrdude, and build with CMake — AVRDUDE ≥ 8 produces libavrdude.so/.a plus libavrdude.h/avrdude.h/ac_cfg.h.
+Install it (sudo make install or cmake --install) so pkg-config --modversion libavrdude succeeds — or point CMake manually:
+```
+cmake .. -DAVRDUDE_INCLUDE_DIRS=/path/to/avrdude/build/src \
+            -DAVRDUDE_LIBRARY_DIRS=/path/to/avrdude/build/src \
+            -DAVRDUDE_LIBRARIES=avrdude
+```
+
+2) Reconfigure — you should see libavrdude : TRUE in the summary and HAVE_LIBAVRDUDE gets defined.
+
+3) Note
+avrdude.conf location — loadConfig() checks /etc/avrdude.conf, /usr/local/etc/avrdude.conf, /usr/share/avrdude/avrdude.conf, and the app directory. If your build installs it elsewhere, either symlink it or pass the path explicitly.
